@@ -1,0 +1,67 @@
+create extension if not exists pgcrypto;
+create table public.profiles (id uuid primary key references auth.users(id), full_name text not null, email text not null unique, role text not null check(role in ('admin','judge')), is_active boolean not null default true, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+create table public.settings (id boolean primary key default true check(id), submission_deadline timestamptz, review_deadline timestamptz, scoring_enabled boolean not null default false, rubric jsonb not null default '[]');
+insert into public.settings(id) values(true);
+create table public.submissions (id uuid primary key default gen_random_uuid(), reference_code text not null unique, team_name text not null, team_id text, institution text not null, leader_name text not null, leader_email text not null, email_verified_at timestamptz, contact_number text, project_title text not null, abstract text not null, original_file_path text not null unique, original_file_name text not null, file_mime_type text not null, file_size bigint not null, preview_file_path text, preview_status text not null default 'queued' check(preview_status in ('queued','processing','ready','failed')), preview_started_at timestamptz, status text not null default 'submitted' check(status in ('submitted','withdrawn','disqualified')), submitted_at timestamptz not null default now(), updated_at timestamptz not null default now());
+create unique index submission_duplicate on public.submissions(lower(leader_email),lower(project_title)) where status='submitted';
+create table public.verification_tokens (submission_id uuid primary key references public.submissions(id), token_hash text not null unique, expires_at timestamptz not null);
+create table public.judge_assignments (id uuid primary key default gen_random_uuid(), submission_id uuid not null references public.submissions(id), judge_id uuid not null references public.profiles(id), assigned_by uuid not null references public.profiles(id), assigned_at timestamptz not null default now(), status text not null default 'active' check(status in ('active','revoked')));
+create unique index one_active_assignment on public.judge_assignments(submission_id) where status='active';
+create index assignment_judge on public.judge_assignments(judge_id,status);
+create table public.feedback (id uuid primary key default gen_random_uuid(), submission_id uuid not null references public.submissions(id), judge_id uuid not null references public.profiles(id), version_number integer not null, overall_feedback text not null default '', strengths text not null default '', improvements text not null default '', technical_suggestions text not null default '', next_steps text not null default '', recommendations text not null default '', internal_notes text not null default '', scores jsonb not null default '{}', status text not null check(status in ('draft','published')), published_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique(submission_id,judge_id,version_number));
+create unique index one_draft on public.feedback(submission_id,judge_id) where status='draft';
+create table public.email_deliveries (id uuid primary key default gen_random_uuid(), submission_id uuid not null references public.submissions(id), feedback_id uuid unique references public.feedback(id), recipient_email text not null, message_type text not null check(message_type in ('confirmation','feedback')), status text not null default 'queued' check(status in ('queued','sending','smtp_accepted','failed','uncertain')), attempt_count integer not null default 0, last_error text, smtp_accepted_at timestamptz, started_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+create index delivery_queue on public.email_deliveries(status,created_at);
+create table public.audit_logs (id uuid primary key default gen_random_uuid(), actor_id uuid references public.profiles(id), action text not null, resource_type text not null, resource_id uuid, metadata jsonb not null default '{}', created_at timestamptz not null default now());
+create table public.rate_limits (key text primary key, hits integer not null default 1, expires_at timestamptz not null);
+create function public.is_admin() returns boolean language sql stable security definer set search_path=public as $$ select exists(select 1 from profiles where id=auth.uid() and role='admin' and is_active) $$;
+create function public.can_review(sid uuid) returns boolean language sql stable security definer set search_path=public as $$ select public.is_admin() or exists(select 1 from judge_assignments a join profiles p on p.id=a.judge_id where a.submission_id=sid and a.judge_id=auth.uid() and a.status='active' and p.is_active) $$;
+alter table public.profiles enable row level security;
+alter table public.settings enable row level security;
+alter table public.submissions enable row level security;
+alter table public.judge_assignments enable row level security;
+alter table public.feedback enable row level security;
+alter table public.email_deliveries enable row level security;
+alter table public.audit_logs enable row level security;
+alter table public.verification_tokens enable row level security;
+alter table public.rate_limits enable row level security;
+create policy profile_read on public.profiles for select to authenticated using(public.is_admin() or (id=auth.uid() and is_active));
+create policy settings_read on public.settings for select to authenticated using(exists(select 1 from public.profiles where id=auth.uid() and is_active));
+create policy submission_read on public.submissions for select to authenticated using(public.can_review(id));
+create policy assignment_read on public.judge_assignments for select to authenticated using(public.is_admin() or (judge_id=auth.uid() and public.can_review(submission_id)));
+create policy feedback_read on public.feedback for select to authenticated using(public.is_admin() or (judge_id=auth.uid() and public.can_review(submission_id)));
+create policy delivery_read on public.email_deliveries for select to authenticated using(public.can_review(submission_id));
+create policy audit_read on public.audit_logs for select to authenticated using(public.is_admin());
+-- No browser/anonymous write policies. Mutations run through validated server endpoints.
+revoke all on public.verification_tokens,public.rate_limits from anon,authenticated;
+revoke insert,update,delete on public.profiles,public.settings,public.submissions,public.judge_assignments,public.feedback,public.email_deliveries,public.audit_logs from anon,authenticated;
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types) values('presentations','presentations',false,26214400,array['application/pdf','application/vnd.openxmlformats-officedocument.presentationml.presentation']);
+-- Storage has no client policies. Authenticated streaming is performed by the application.
+create function public.guard_publication() returns trigger language plpgsql as $$ begin if old.status='published' then raise exception 'Published feedback is immutable'; end if; return new; end $$;
+create trigger immutable_feedback before update or delete on public.feedback for each row execute function public.guard_publication();
+create function public.consume_rate(k text) returns boolean language plpgsql security definer set search_path=public as $$ declare n integer; begin insert into rate_limits(key,expires_at) values(k,now()+interval '1 hour') on conflict(key) do update set hits=case when rate_limits.expires_at<now() then 1 else rate_limits.hits+1 end,expires_at=case when rate_limits.expires_at<now() then now()+interval '1 hour' else rate_limits.expires_at end returning hits into n; return n<=5; end $$;
+create function public.save_review(sid uuid, actor uuid, body jsonb, publish boolean) returns uuid language plpgsql security definer set search_path=public as $$ declare f feedback; s submissions; cfg settings; criterion jsonb; begin
+ select * into s from submissions where id=sid for update;
+ if not exists(select 1 from profiles p join judge_assignments a on a.judge_id=p.id where p.id=actor and p.is_active and p.role='judge' and a.submission_id=sid and a.status='active') or s.status<>'submitted' then raise exception 'Not authorized'; end if;
+ select * into cfg from settings where id=true;
+ if publish and s.email_verified_at is null then raise exception 'Participant email is not verified'; end if;
+ if publish and (length(trim(body->>'overall_feedback'))<20 or length(trim(body->>'strengths'))<10 or length(trim(body->>'improvements'))<10) then raise exception 'Complete required feedback'; end if;
+ if publish and cfg.scoring_enabled then for criterion in select * from jsonb_array_elements(cfg.rubric) loop if not ((body->'scores') ? (criterion->>'name')) or ((body->'scores'->>(criterion->>'name'))::numeric not between (criterion->>'min')::numeric and (criterion->>'max')::numeric) then raise exception 'Invalid scores'; end if; end loop; end if;
+ select * into f from feedback where submission_id=sid and judge_id=actor and status='draft' for update;
+ if f.id is null then insert into feedback(submission_id,judge_id,version_number,status) values(sid,actor,(select coalesce(max(version_number),0)+1 from feedback where submission_id=sid and judge_id=actor),'draft') returning * into f; end if;
+ update feedback set overall_feedback=body->>'overall_feedback', strengths=body->>'strengths', improvements=body->>'improvements', technical_suggestions=body->>'technical_suggestions', next_steps=body->>'next_steps', recommendations=body->>'recommendations',internal_notes=body->>'internal_notes',scores=case when cfg.scoring_enabled then body->'scores' else '{}'::jsonb end, updated_at=now() where id=f.id;
+ if publish then
+ update feedback set status='published',published_at=now() where id=f.id;
+ insert into email_deliveries(submission_id,feedback_id,recipient_email,message_type) values(sid,f.id,s.leader_email,'feedback');
+ insert into audit_logs(actor_id,action,resource_type,resource_id) values(actor,'feedback.published','feedback',f.id);
+ end if; return f.id; end $$;
+create function public.assign_submission(sid uuid, jid uuid, actor uuid) returns void language plpgsql security definer set search_path=public as $$ begin
+ perform 1 from submissions where id=sid for update;
+ if not exists(select 1 from profiles where id=actor and role='admin' and is_active) or not exists(select 1 from profiles where id=jid and role='judge' and is_active) then raise exception 'Not authorized'; end if;
+ update judge_assignments set status='revoked' where submission_id=sid and status='active';
+ insert into judge_assignments(submission_id,judge_id,assigned_by) values(sid,jid,actor);
+ insert into audit_logs(actor_id,action,resource_type,resource_id,metadata) values(actor,'submission.assigned','submission',sid,jsonb_build_object('judge_id',jid)); end $$;
+create function public.claim_delivery() returns setof public.email_deliveries language sql security definer set search_path=public as $$ update email_deliveries set status='sending',attempt_count=attempt_count+1,started_at=now() where id=(select id from email_deliveries where status='queued' order by created_at for update skip locked limit 1) returning * $$;
+create function public.claim_preview() returns setof public.submissions language sql security definer set search_path=public as $$ update submissions set preview_status='processing',preview_started_at=now() where id=(select id from submissions where preview_status='queued' order by submitted_at for update skip locked limit 1) returning * $$;
+revoke execute on function public.consume_rate(text),public.save_review(uuid,uuid,jsonb,boolean),public.assign_submission(uuid,uuid,uuid),public.claim_delivery(),public.claim_preview() from public,anon,authenticated;
+grant execute on function public.consume_rate(text),public.save_review(uuid,uuid,jsonb,boolean),public.assign_submission(uuid,uuid,uuid),public.claim_delivery(),public.claim_preview() to service_role;

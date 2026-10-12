@@ -1,0 +1,6 @@
+.git
+.tools
+.next
+node_modules
+.env*
+coverage

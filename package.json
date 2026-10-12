@@ -1,0 +1,45 @@
+{
+  "name": "farlands-review-portal",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "worker": "tsx --env-file=.env.local scripts/worker.ts",
+    "provision-admin": "tsx --env-file=.env.local scripts/provision-admin.ts",
+    "postinstall": "node scripts/copy-pdf-worker.mjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.57.0",
+    "lucide-react": "^0.468.0",
+    "next": "^16.0.0",
+    "nodemailer": "^10.1.0",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "server-only": "^0.0.1",
+    "yauzl": "^3.2.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.9",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^7.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/yauzl": "^2.10.3",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "prettier": "^3.9.10",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.4"
+  }
+}

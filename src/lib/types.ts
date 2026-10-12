@@ -1,0 +1,41 @@
+export type Submission = {
+  id: string;
+  reference_code: string;
+  team_name: string;
+  project_title: string;
+  institution: string;
+  leader_name: string;
+  leader_email: string;
+  contact_number: string | null;
+  abstract: string;
+  status: string;
+  preview_status: string;
+  submitted_at: string;
+  email_verified_at: string | null;
+};
+export type Feedback = {
+  id: string;
+  submission_id: string;
+  judge_id: string;
+  version_number: number;
+  status: string;
+  overall_feedback: string;
+  strengths: string;
+  improvements: string;
+  technical_suggestions: string;
+  next_steps: string;
+  recommendations: string;
+  internal_notes: string;
+  scores: Record<string, number>;
+  published_at: string | null;
+};
+export type Delivery = {
+  id: string;
+  submission_id: string;
+  feedback_id: string | null;
+  status: string;
+  message_type: string;
+  attempt_count: number;
+  last_error: string | null;
+};
+export type Rubric = { name: string; min: number; max: number };
