@@ -30,10 +30,19 @@ export async function submissionAccess(id: string) {
   return { ...auth, submission };
 }
 export function originCheck(req: Request) {
-  if (
-    req.headers.get("origin") !==
-    new URL(process.env.NEXT_PUBLIC_APP_URL!).origin
-  )
+  let expectedOrigin: string;
+  try {
+    const configured = new URL(process.env.NEXT_PUBLIC_APP_URL || "");
+    if (!["http:", "https:"].includes(configured.protocol))
+      throw new Error("Invalid protocol");
+    expectedOrigin = configured.origin;
+  } catch {
+    throw new HttpError(
+      503,
+      "Site URL configuration is missing or invalid. Set NEXT_PUBLIC_APP_URL to the full website URL and redeploy.",
+    );
+  }
+  if (req.headers.get("origin") !== expectedOrigin)
     throw new HttpError(403, "Invalid request origin.");
 }
 export function errorResponse(e: unknown) {
