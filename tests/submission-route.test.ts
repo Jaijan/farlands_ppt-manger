@@ -14,24 +14,17 @@ vi.mock("@/lib/db", () => ({
     return r.data;
   },
 }));
+import { createSubmissionToken } from "../src/lib/submission-guard";
 import { POST } from "../src/app/api/submit/route";
 beforeEach(() => {
   vi.resetAllMocks();
   process.env.NEXT_PUBLIC_APP_URL = "https://farlands.example";
-  process.env.TURNSTILE_SECRET_KEY = "test-key-not-a-credential";
-  vi.stubGlobal(
-    "fetch",
-    vi
-      .fn()
-      .mockResolvedValue({
-        json: async () => ({ success: true, hostname: "farlands.example" }),
-      }),
-  );
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "test-only-signing-key";
   mock.rpc.mockResolvedValue({ data: true, error: null });
   mock.upload.mockResolvedValue({ data: { path: "private" }, error: null });
   mock.remove.mockResolvedValue({ error: null });
 });
-function request(file: Blob) {
+function request(file: Blob, overrides: Record<string, string> = {}) {
   const form = new FormData();
   for (const [k, v] of Object.entries({
     team_name: "Test team",
@@ -41,7 +34,9 @@ function request(file: Blob) {
     project_title: "Real project",
     abstract: "A detailed project abstract for presentation review.",
     confirmed: "on",
-    "cf-turnstile-response": "test-token",
+    submission_token: createSubmissionToken(Date.now() - 3000),
+    website: "",
+    ...overrides,
   }))
     form.set(k, v);
   form.set("presentation", file, "deck.pdf");
@@ -81,11 +76,23 @@ it("cleans up storage if the transactional registration fails", async () => {
   expect(result.status).toBe(409);
   expect(mock.remove).toHaveBeenCalledOnce();
 });
-it("rejects invalid CAPTCHA without uploading", async () => {
-  vi.mocked(fetch).mockResolvedValue({
-    json: async () => ({ success: false }),
-  } as Response);
-  const result = await POST(request(new Blob(["%PDF-1.7\n%%EOF"])));
+it("rejects forged form tokens without uploading", async () => {
+  const result = await POST(
+    request(new Blob(["%PDF-1.7\n%%EOF"]), { submission_token: "forged" }),
+  );
   expect(result.status).toBe(400);
+  expect(mock.upload).not.toHaveBeenCalled();
+});
+it("rejects honeypot entries before writing storage", async () => {
+  const result = await POST(
+    request(new Blob(["%PDF-1.7\n%%EOF"]), { website: "https://spam.example" }),
+  );
+  expect(result.status).toBe(400);
+  expect(mock.upload).not.toHaveBeenCalled();
+});
+it("retains the durable email rate limit", async () => {
+  mock.rpc.mockResolvedValueOnce({ data: false, error: null });
+  const result = await POST(request(new Blob(["%PDF-1.7\n%%EOF"])));
+  expect(result.status).toBe(429);
   expect(mock.upload).not.toHaveBeenCalled();
 });

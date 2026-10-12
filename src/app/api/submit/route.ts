@@ -3,6 +3,7 @@ import { submissionSchema, PDF } from "@/lib/validation";
 import { detectPresentation } from "@/lib/files";
 import { service, checked } from "@/lib/db";
 import { originCheck, errorResponse, HttpError } from "@/lib/auth";
+import { validSubmissionToken } from "@/lib/submission-guard";
 export const runtime = "nodejs";
 export async function POST(req: Request) {
   try {
@@ -18,24 +19,16 @@ export async function POST(req: Request) {
         400,
         "Check all required fields and confirm your details.",
       );
-    const token = String(form.get("cf-turnstile-response") || "");
-    if (!process.env.TURNSTILE_SECRET_KEY)
-      throw new HttpError(503, "Submissions are not configured yet.");
-    const captcha = await fetch(
-      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-      {
-        method: "POST",
-        body: new URLSearchParams({
-          secret: process.env.TURNSTILE_SECRET_KEY,
-          response: token,
-        }),
-      },
-    ).then((r) => r.json());
     if (
-      !captcha.success ||
-      captcha.hostname !== new URL(process.env.NEXT_PUBLIC_APP_URL!).hostname
+      !validSubmissionToken(
+        String(form.get("submission_token") || ""),
+        String(form.get("website") || ""),
+      )
     )
-      throw new HttpError(400, "Please complete the security check.");
+      throw new HttpError(
+        400,
+        "This form could not be verified. Reload the page and try again.",
+      );
     const key = createHash("sha256")
       .update(parsed.data.leader_email)
       .digest("hex");

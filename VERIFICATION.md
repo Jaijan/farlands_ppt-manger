@@ -2,7 +2,8 @@
 
 Verified locally on 12 October 2026:
 
-- 38 tests pass across 6 suites: submission validation and route handling, SMTP transport configuration, email privacy, authorization, conversion failure handling, and embedded PostgreSQL integration.
+- 44 tests pass across 7 suites: submission validation and route handling, signed form-token validation, SMTP transport configuration, email privacy, authorization, conversion failure handling, and embedded PostgreSQL integration.
+- Cloudflare Turnstile was removed. Tests verify signed form timestamps, expiration, tampering, honeypot rejection, and retained email rate limiting. No external CAPTCHA keys are required; these checks provide basic bot friction rather than equivalent CAPTCHA protection.
 - The database suite executes all three migrations with minimal Supabase Auth/Storage schema adapters. It verifies RLS, role restrictions, atomic registration/publication, immutable history, idempotency, queue claims, assignment revocation, and deactivation.
 - TypeScript type checking passes.
 - ESLint passes.

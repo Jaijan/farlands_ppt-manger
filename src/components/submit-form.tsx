@@ -1,8 +1,13 @@
 "use client";
-import Script from "next/script";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-export function SubmitForm({ max }: { max: number }) {
+export function SubmitForm({
+  max,
+  token,
+}: {
+  max: number;
+  token: string | null;
+}) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const router = useRouter();
@@ -32,6 +37,26 @@ export function SubmitForm({ max }: { max: number }) {
       }}
     >
       <fieldset disabled={busy}>
+        <input type="hidden" name="submission_token" value={token || ""} />
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: "-10000px",
+            width: 1,
+            height: 1,
+            overflow: "hidden",
+          }}
+        >
+          <label htmlFor="website">Leave this field empty</label>
+          <input
+            id="website"
+            name="website"
+            type="text"
+            tabIndex={-1}
+            autoComplete="off"
+          />
+        </div>
         <div className="eyebrow">01 / Your team</div>
         <div className="form-grid">
           {[
@@ -97,28 +122,13 @@ export function SubmitForm({ max }: { max: number }) {
           <input type="checkbox" name="confirmed" required />I confirm these
           details are correct and agree to receive submission and review emails.
         </label>
-        {process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ? (
-          <>
-            <Script
-              src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-              strategy="afterInteractive"
-            />
-            <div
-              className="cf-turnstile"
-              data-sitekey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY}
-              data-theme="dark"
-            />
-          </>
-        ) : (
+        {!token && (
           <p className="notice">
-            Submissions will open once the event administrator completes
-            security configuration.
+            Submissions will open once the event administrator completes service
+            configuration.
           </p>
         )}
-        <button
-          style={{ marginTop: 24 }}
-          disabled={!process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY}
-        >
+        <button style={{ marginTop: 24 }} disabled={!token}>
           {busy ? "Uploading presentation…" : "Submit presentation ↗"}
         </button>
       </fieldset>

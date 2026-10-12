@@ -4,7 +4,7 @@ A standalone Next.js application for account-free participant submissions, priva
 
 ## Local development
 
-Requires Node.js 22.13+ (Node 22 LTS recommended), npm, a Supabase project, an SMTP provider, and Cloudflare Turnstile. LibreOffice is required on the worker host for PPTX conversion.
+Requires Node.js 22.13+ (Node 22 LTS recommended), npm, a Supabase project, and an SMTP provider. LibreOffice is required on the worker host for PPTX conversion.
 
 ```sh
 npm ci
@@ -15,7 +15,7 @@ npm run dev
 npm run worker
 ```
 
-Open http://localhost:3000. The home and submission pages work without service credentials, but submissions and protected areas require configuration. Missing CAPTCHA configuration deliberately disables submission. `npm ci` copies the matching PDF.js worker, fonts, CMaps, and WASM into ignored public assets.
+Open http://localhost:3000. The home and submission pages work without service credentials, but submissions and protected areas require configuration. No Cloudflare account or CAPTCHA keys are required. `npm ci` copies the matching PDF.js worker, fonts, CMaps, and WASM into ignored public assets.
 
 ## Supabase setup
 
@@ -46,7 +46,7 @@ Use `/admin/settings` to send an SMTP test to the signed-in administrator. Servi
 
 ## Uploads, previews, and abuse prevention
 
-`MAX_UPLOAD_SIZE_MB` defaults to 25. `ALLOWED_UPLOAD_MIME_TYPES` defaults to PDF and PPTX. Keep the application limit, Supabase bucket `file_size_limit`, and reverse-proxy body limit consistent if changing it. The supplied Nginx config permits a 25 MB file plus multipart overhead, limits submission/auth traffic by IP, and must sit in front of the app in production. The database also enforces a five-submissions-per-email-per-hour limit. Turnstile is mandatory and the verification hostname must match `NEXT_PUBLIC_APP_URL`.
+`MAX_UPLOAD_SIZE_MB` defaults to 25. `ALLOWED_UPLOAD_MIME_TYPES` defaults to PDF and PPTX. Keep the application limit, Supabase bucket `file_size_limit`, and reverse-proxy body limit consistent if changing it. The supplied Nginx config permits a 25 MB file plus multipart overhead, limits submission/auth traffic by IP, and must sit in front of the app in production. The database also enforces a five-submissions-per-email-per-hour limit. The form uses a signed, expiring timestamp and a hidden honeypot to discourage basic automated submissions. Tokens are generated server-side using a domain-separated HMAC with the existing service-role secret; no extra key setup is needed. Forms must be at least two seconds old and expire after four hours. These checks are basic bot friction, not a CAPTCHA equivalent; sophisticated bots can still load and submit forms. Keep ingress IP limits enabled.
 
 Files are signature checked; PPTX ZIP containers are checked for required members, encryption, path traversal, entry count, expansion size, and executable/macro members. Names are randomized in storage. PDF.js renders canvas pages from authenticated `no-store` endpoints; no public file URL is generated. Browser database and storage writes are denied. References are receipts, not access credentials.
 
@@ -62,7 +62,7 @@ Use a Node-compatible container/VM with HTTPS termination, Supabase connectivity
 docker compose --env-file .env.local up --build -d
 ```
 
-The reverse proxy listens on port 8080. Put your HTTPS ingress in front of it and set `NEXT_PUBLIC_APP_URL` to the exact public origin. Do not expose the web container's port directly: doing so bypasses ingress upload limits and IP throttling. Configure your trusted proxy's real-client-IP handling if adding another ingress. Public Supabase and Turnstile values are build arguments; rebuild when they change. Service-role and SMTP credentials are runtime environment values only.
+The reverse proxy listens on port 8080. Put your HTTPS ingress in front of it and set `NEXT_PUBLIC_APP_URL` to the exact public origin. Do not expose the web container's port directly: doing so bypasses ingress upload limits and IP throttling. Configure your trusted proxy's real-client-IP handling if adding another ingress. Public Supabase values are build arguments; rebuild when they change. Service-role and SMTP credentials are runtime environment values only.
 
 Run both `web` and `worker`; a stopped worker leaves jobs visibly queued. Multiple workers safely claim jobs with `FOR UPDATE SKIP LOCKED`. Monitor failed/uncertain deliveries and preview jobs, and configure database/storage backups. Do not log request bodies, verification links, or authentication callback query strings at your ingress. The application does not log them.
 
@@ -92,6 +92,6 @@ Before opening the event, run this live acceptance check with your own test addr
 
 ## Remaining external configuration
 
-No service credentials are included. Apply migrations, configure Supabase Auth and SMTP, supply Turnstile keys, provision the first administrator, and deploy the web/worker services before live use. Live mail delivery, Supabase access, browser rendering, and LibreOffice conversion require an environment-backed acceptance run; compilation alone does not verify those services.
+No service credentials are included. Apply migrations, configure Supabase Auth and SMTP, provision the first administrator, and deploy the web/worker services before live use. Live mail delivery, Supabase access, browser rendering, and LibreOffice conversion require an environment-backed acceptance run; compilation alone does not verify those services.
 
 Implementation follows the official [Next.js cookie API](https://nextjs.org/docs/app/api-reference/functions/cookies) and [Supabase server-side authentication guidance](https://supabase.com/docs/guides/auth/server-side/creating-a-client).

@@ -1,6 +1,7 @@
 import { PublicHeader } from "@/components/brand";
 import { SubmitForm } from "@/components/submit-form";
 import { service, checked } from "@/lib/db";
+import { createSubmissionToken } from "@/lib/submission-guard";
 export const dynamic = "force-dynamic";
 export default async function Page() {
   const settings = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -37,7 +38,14 @@ export default async function Page() {
             </p>
           </section>
         ) : (
-          <SubmitForm max={Number(process.env.MAX_UPLOAD_SIZE_MB || 25)} />
+          <SubmitForm
+            max={Number(process.env.MAX_UPLOAD_SIZE_MB || 25)}
+            token={
+              process.env.SUPABASE_SERVICE_ROLE_KEY
+                ? createSubmissionToken()
+                : null
+            }
+          />
         )}
       </main>
     </>
